@@ -6,7 +6,7 @@ import io
 from langdetect import detect
 
 st.set_page_config(page_title="Custom Audiobook Maker", page_icon="🎙️")
-st.title("🎙️ PDF to MP3 with Voice Control")
+st.title("🎙️ PDF to MP3 for Nurchi")
 
 # 1. Sidebar for Settings
 st.sidebar.header("Voice Settings")
@@ -60,4 +60,5 @@ if uploaded_file:
                         st.audio(audio_bytes, format="audio/mp3")
                         st.download_button("Download MP3", audio_bytes, file_name="audiobook.mp3")
             except Exception as e:
+
                 st.error(f"Something went wrong: {e}")
