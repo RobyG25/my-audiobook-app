@@ -11,11 +11,13 @@ from PIL import Image
 st.set_page_config(page_title="Audiobook Pro", page_icon="🎙️")
 st.title("🎙️ מעבד PDF מתקדם: עמודות וסריקות")
 
-# הגדרת מנוע ה-OCR (נטען פעם אחת כדי לחסוך זמן)
+# הגדרת מנוע ה-OCR עם בדיקת שגיאות
 @st.cache_resource
 def load_ocr():
- # שינינו מ-'he' ל-'iw' כדי לפתור את השגיאה
-    return easyocr.Reader(['iw', 'en'])
+    try:
+        return easyocr.Reader(['he', 'en'])
+    except:
+        return easyocr.Reader(['en'])
 
 reader = load_ocr()
 
@@ -28,23 +30,26 @@ async def generate_audio(text, voice_name, speed):
             audio_data += chunk["data"]
     return audio_data
 
-# פונקציה למיון טקסט לפי עמודות (תצוגת עיתון)
+# פונקציה למיון טקסט לפי עמודות (תצוגת עיתון/ספר פתוח)
 def get_layout_aware_text(page):
     blocks = page.get_text("blocks")
-    # מחלקים את הדף באמצע
+    if not blocks:
+        return ""
+    
     mid_point = page.rect.width / 2
     
-    # מחלקים את הבלוקים לימין ושמאל
-    right_column = [b for b in blocks if b[0] > mid_point]
-    left_column = [b for b in blocks if b[0] <= mid_point]
+    # מיון בלוקים לפי עמודה ימנית ואז שמאלית (מתאים לעברית)
+    right_column = [b for b in blocks if b[0] > (mid_point - 20)]
+    left_column = [b for b in blocks if b[0] <= (mid_point - 20)]
     
-    # בעברית: קודם קוראים את צד ימין מלמעלה למטה, ואז את צד שמאל
+    # מיון כל עמודה מלמעלה למטה
     right_column.sort(key=lambda b: b[1])
     left_column.sort(key=lambda b: b[1])
     
-    combined_blocks = right_column + left_column
-    return " ".join([b[4].replace('\n', ' ') for b in combined_blocks if b[4].strip()])
-uploaded_file = st.file_uploader("העלה קובץ PDF (דיגיטלי או סרוק)", type="pdf")
+    combined = right_column + left_column
+    return " ".join([b[4].replace('\n', ' ') for b in combined if b[4].strip()])
+
+uploaded_file = st.file_uploader("העלה קובץ PDF", type="pdf")
 
 VOICE_MAP = {
     "he": {"Female": "he-IL-HilaNeural", "Male": "he-IL-AvriNeural"},
@@ -52,34 +57,41 @@ VOICE_MAP = {
 }
 
 if uploaded_file:
-    with st.spinner("מעבד את הקובץ... זה עשוי לקחת זמן בגלל ה-OCR"):
+    with st.spinner("מעבד דפים..."):
         doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
         full_text = ""
         
         for page in doc:
-            # 1. ניסיון לחלץ טקסט דיגיטלי עם הבנה של עמודות
             page_text = get_layout_aware_text(page)
             
-            # 2. אם העמוד ריק (סריקה), נפעיל OCR
-            if len(page_text.strip()) < 10:
+            # אם הדף סרוק (תמונה)
+            if len(page_text.strip()) < 20:
                 pix = page.get_pixmap()
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 results = reader.readtext(np.array(img), paragraph=True)
-                # מיון תוצאות ה-OCR לפי עמודות
-                results.sort(key=lambda r: (r[0][0][0] < (pix.width / 2), r[0][0][1]))
-                page_text = " ".join([r[1] for r in results])
+                
+                # מיון תוצאות OCR לפי עמודות (ימין ואז שמאל)
+                mid = pix.width / 2
+                r_res = [r for r in results if r[0][0][0] > (mid - 20)]
+                l_res = [r for r in results if r[0][0][0] <= (mid - 20)]
+                
+                r_res.sort(key=lambda r: r[0][0][1])
+                l_res.sort(key=lambda r: r[0][0][1])
+                
+                page_text = " ".join([r[1] for r in r_res + l_res])
             
             full_text += page_text + " "
 
         if full_text.strip():
             try:
-                lang = detect(full_text[:500])
+                lang = detect(full_text[:1000])
                 st.write(f"**שפה שזוהתה:** {lang.upper()}")
                 
-                speed_pct = st.sidebar.slider("מהירות דיבור (%)", -50, 50, 0, 5)
+                speed_pct = st.sidebar.slider("מהירות (%)", -50, 50, 0, 5)
                 gender = st.radio("בחר קול:", ["Female", "Male"])
                 
-                supported_lang = "he" if lang == "he" else "en"
+                # תמיכה בעברית ואנגלית בלבד כרגע
+                supported_lang = "he" if (lang == 'he' or lang == 'iw') else "en"
                 selected_voice = VOICE_MAP[supported_lang][gender]
 
                 if st.button("צור קובץ שמע"):
@@ -88,5 +100,4 @@ if uploaded_file:
                         st.audio(audio_bytes)
                         st.download_button("הורד MP3", audio_bytes, "audiobook.mp3")
             except Exception as e:
-                st.error(f"שגיאה: {e}")
-
+                st.error(f"שגיאה בעיבוד השפה: {e}")
