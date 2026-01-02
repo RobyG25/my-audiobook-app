@@ -3,25 +3,24 @@ import fitz  # PyMuPDF
 import edge_tts
 import asyncio
 import io
-import numpy as np
-import easyocr
 from langdetect import detect
-from PIL import Image
 
-st.set_page_config(page_title="Audiobook Pro", page_icon="🎙️")
-st.title("🎙️ מעבד PDF מתקדם: עמודות וסריקות")
+st.set_page_config(page_title="Audiobook Maker", page_icon="📖")
 
-# הגדרת מנוע ה-OCR עם בדיקת שגיאות
-@st.cache_resource
-def load_ocr():
-    try:
-        return easyocr.Reader(['he', 'en'])
-    except:
-        return easyocr.Reader(['en'])
+st.title("📖 הפיכת PDF ל-MP3")
+st.markdown("גרסה דיגיטלית מהירה - תומכת בעברית ואנגלית")
 
-reader = load_ocr()
+# הגדרות קול ומהירות בתפריט הצד
+st.sidebar.header("הגדרות שמע")
+speed_pct = st.sidebar.slider("מהירות דיבור (%)", -50, 50, 0, 5)
+gender = st.sidebar.radio("מין הקריין/נית:", ["נקבה", "זכר"])
 
-# פונקציה להפקת קול
+# מפת קולות - Microsoft Edge Neural Voices
+VOICE_MAP = {
+    "he": {"נקבה": "he-IL-HilaNeural", "זכר": "he-IL-AvriNeural"},
+    "en": {"נקבה": "en-US-EmmaNeural", "זכר": "en-US-GuyNeural"}
+}
+
 async def generate_audio(text, voice_name, speed):
     communicate = edge_tts.Communicate(text, voice_name, rate=speed)
     audio_data = b""
@@ -30,74 +29,41 @@ async def generate_audio(text, voice_name, speed):
             audio_data += chunk["data"]
     return audio_data
 
-# פונקציה למיון טקסט לפי עמודות (תצוגת עיתון/ספר פתוח)
-def get_layout_aware_text(page):
-    blocks = page.get_text("blocks")
-    if not blocks:
-        return ""
-    
-    mid_point = page.rect.width / 2
-    
-    # מיון בלוקים לפי עמודה ימנית ואז שמאלית (מתאים לעברית)
-    right_column = [b for b in blocks if b[0] > (mid_point - 20)]
-    left_column = [b for b in blocks if b[0] <= (mid_point - 20)]
-    
-    # מיון כל עמודה מלמעלה למטה
-    right_column.sort(key=lambda b: b[1])
-    left_column.sort(key=lambda b: b[1])
-    
-    combined = right_column + left_column
-    return " ".join([b[4].replace('\n', ' ') for b in combined if b[4].strip()])
-
-uploaded_file = st.file_uploader("העלה קובץ PDF", type="pdf")
-
-VOICE_MAP = {
-    "he": {"Female": "he-IL-HilaNeural", "Male": "he-IL-AvriNeural"},
-    "en": {"Female": "en-US-EmmaNeural", "Male": "en-US-GuyNeural"}
-}
+uploaded_file = st.file_uploader("העלה קובץ PDF דיגיטלי", type="pdf")
 
 if uploaded_file:
-    with st.spinner("מעבד דפים..."):
+    with st.spinner("חלץ טקסט מהקובץ..."):
         doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-        full_text = ""
+        # ניקוי טקסט בסיסי: מחבר שורות כדי למנוע קפיצות בקריאה
+        full_text = " ".join([page.get_text().replace('\n', ' ') for page in doc])
         
-        for page in doc:
-            page_text = get_layout_aware_text(page)
-            
-            # אם הדף סרוק (תמונה)
-            if len(page_text.strip()) < 20:
-                pix = page.get_pixmap()
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                results = reader.readtext(np.array(img), paragraph=True)
-                
-                # מיון תוצאות OCR לפי עמודות (ימין ואז שמאל)
-                mid = pix.width / 2
-                r_res = [r for r in results if r[0][0][0] > (mid - 20)]
-                l_res = [r for r in results if r[0][0][0] <= (mid - 20)]
-                
-                r_res.sort(key=lambda r: r[0][0][1])
-                l_res.sort(key=lambda r: r[0][0][1])
-                
-                page_text = " ".join([r[1] for r in r_res + l_res])
-            
-            full_text += page_text + " "
-
-        if full_text.strip():
+        if len(full_text.strip()) > 10:
             try:
+                # זיהוי שפה (עברית או אנגלית)
                 lang = detect(full_text[:1000])
-                st.write(f"**שפה שזוהתה:** {lang.upper()}")
-                
-                speed_pct = st.sidebar.slider("מהירות (%)", -50, 50, 0, 5)
-                gender = st.radio("בחר קול:", ["Female", "Male"])
-                
-                # תמיכה בעברית ואנגלית בלבד כרגע
                 supported_lang = "he" if (lang == 'he' or lang == 'iw') else "en"
+                st.info(f"שפה שזוהתה: {supported_lang.upper()}")
+                
                 selected_voice = VOICE_MAP[supported_lang][gender]
 
-                if st.button("צור קובץ שמע"):
+                if st.button("צור קובץ שמע (MP3)"):
                     with st.spinner("מייצר אודיו..."):
-                        audio_bytes = asyncio.run(generate_audio(full_text, selected_voice, f"{speed_pct:+d}%"))
-                        st.audio(audio_bytes)
-                        st.download_button("הורד MP3", audio_bytes, "audiobook.mp3")
+                        # הפקת האודיו
+                        speed_str = f"{speed_pct:+d}%"
+                        audio_bytes = asyncio.run(generate_audio(full_text, selected_voice, speed_str))
+                        
+                        # הצגת הנגן והורדה
+                        st.audio(audio_bytes, format="audio/mp3")
+                        st.download_button(
+                            label="הורד קובץ MP3",
+                            data=audio_bytes,
+                            file_name="my_audiobook.mp3",
+                            mime="audio/mp3"
+                        )
             except Exception as e:
-                st.error(f"שגיאה בעיבוד השפה: {e}")
+                st.error(f"אירעה שגיאה: {e}")
+        else:
+            st.warning("לא נמצא טקסט דיגיטלי בקובץ. וודא שהקובץ אינו סרוק כתמונה.")
+
+st.divider()
+st.caption("טיפ: האפליקציה עובדת הכי טוב עם קבצי PDF שיוצרו ב-Word או נשמרו מאתרי אינטרנט.")
