@@ -2,6 +2,3 @@ streamlit
 pymupdf
 edge-tts
 langdetect
-easyocr
-opencv-python-headless
-numpy
