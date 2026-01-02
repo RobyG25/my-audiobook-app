@@ -14,7 +14,8 @@ st.title("🎙️ מעבד PDF מתקדם: עמודות וסריקות")
 # הגדרת מנוע ה-OCR (נטען פעם אחת כדי לחסוך זמן)
 @st.cache_resource
 def load_ocr():
-    return easyocr.Reader(['he', 'en'])
+ # שינינו מ-'he' ל-'iw' כדי לפתור את השגיאה
+    return easyocr.Reader(['iw', 'en'])
 
 reader = load_ocr()
 
@@ -30,11 +31,19 @@ async def generate_audio(text, voice_name, speed):
 # פונקציה למיון טקסט לפי עמודות (תצוגת עיתון)
 def get_layout_aware_text(page):
     blocks = page.get_text("blocks")
-    # מיון לפי עמודה (שמאל לימין בגלל עברית/אנגלית) ואז לפי גובה
-    # ב-PDF עברי, נרצה בד"כ שהעמודה הימנית תקרא קודם
-    blocks.sort(key=lambda b: (b[0] < (page.rect.width / 2), b[1]))
-    return " ".join([b[4].replace('\n', ' ') for b in blocks if b[4].strip()])
-
+    # מחלקים את הדף באמצע
+    mid_point = page.rect.width / 2
+    
+    # מחלקים את הבלוקים לימין ושמאל
+    right_column = [b for b in blocks if b[0] > mid_point]
+    left_column = [b for b in blocks if b[0] <= mid_point]
+    
+    # בעברית: קודם קוראים את צד ימין מלמעלה למטה, ואז את צד שמאל
+    right_column.sort(key=lambda b: b[1])
+    left_column.sort(key=lambda b: b[1])
+    
+    combined_blocks = right_column + left_column
+    return " ".join([b[4].replace('\n', ' ') for b in combined_blocks if b[4].strip()])
 uploaded_file = st.file_uploader("העלה קובץ PDF (דיגיטלי או סרוק)", type="pdf")
 
 VOICE_MAP = {
@@ -80,3 +89,4 @@ if uploaded_file:
                         st.download_button("הורד MP3", audio_bytes, "audiobook.mp3")
             except Exception as e:
                 st.error(f"שגיאה: {e}")
+
