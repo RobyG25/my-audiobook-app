@@ -1,33 +1,24 @@
 import streamlit as st
-import fitz
+import fitz  # PyMuPDF
 import edge_tts
 import asyncio
 import io
+import numpy as np
+import easyocr
 from langdetect import detect
+from PIL import Image
 
-st.set_page_config(page_title="Custom Audiobook Maker", page_icon="🎙️")
-st.title("🎙️ PDF to MP3 for Nurchi")
+st.set_page_config(page_title="Audiobook Pro", page_icon="🎙️")
+st.title("🎙️ מעבד PDF מתקדם: עמודות וסריקות")
 
-# 1. Sidebar for Settings
-st.sidebar.header("Voice Settings")
-speed_pct = st.sidebar.slider("Speed Adjustment (%)", -50, 50, 0, 5)
-# Convert speed to the format edge-tts expects (e.g., "+10%" or "-5%")
-speed_str = f"{speed_pct:+d}%"
+# הגדרת מנוע ה-OCR (נטען פעם אחת כדי לחסוך זמן)
+@st.cache_resource
+def load_ocr():
+    return easyocr.Reader(['he', 'en'])
 
-uploaded_file = st.file_uploader("Upload a PDF (English or Hebrew)", type="pdf")
+reader = load_ocr()
 
-# Define available voices
-VOICE_MAP = {
-    "he": {
-        "Female": "he-IL-HilaNeural",
-        "Male": "he-IL-AvriNeural"
-    },
-    "en": {
-        "Female": "en-US-EmmaNeural",
-        "Male": "en-US-GuyNeural"
-    }
-}
-
+# פונקציה להפקת קול
 async def generate_audio(text, voice_name, speed):
     communicate = edge_tts.Communicate(text, voice_name, rate=speed)
     audio_data = b""
@@ -36,29 +27,56 @@ async def generate_audio(text, voice_name, speed):
             audio_data += chunk["data"]
     return audio_data
 
+# פונקציה למיון טקסט לפי עמודות (תצוגת עיתון)
+def get_layout_aware_text(page):
+    blocks = page.get_text("blocks")
+    # מיון לפי עמודה (שמאל לימין בגלל עברית/אנגלית) ואז לפי גובה
+    # ב-PDF עברי, נרצה בד"כ שהעמודה הימנית תקרא קודם
+    blocks.sort(key=lambda b: (b[0] < (page.rect.width / 2), b[1]))
+    return " ".join([b[4].replace('\n', ' ') for b in blocks if b[4].strip()])
+
+uploaded_file = st.file_uploader("העלה קובץ PDF (דיגיטלי או סרוק)", type="pdf")
+
+VOICE_MAP = {
+    "he": {"Female": "he-IL-HilaNeural", "Male": "he-IL-AvriNeural"},
+    "en": {"Female": "en-US-EmmaNeural", "Male": "en-US-GuyNeural"}
+}
+
 if uploaded_file:
-    with st.spinner("Extracting text..."):
+    with st.spinner("מעבד את הקובץ... זה עשוי לקחת זמן בגלל ה-OCR"):
         doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-        # Cleaning: join lines to fix the "skipping" issue you had
-        text = " ".join([page.get_text().replace('\n', ' ') for page in doc])
+        full_text = ""
         
-        if text.strip():
+        for page in doc:
+            # 1. ניסיון לחלץ טקסט דיגיטלי עם הבנה של עמודות
+            page_text = get_layout_aware_text(page)
+            
+            # 2. אם העמוד ריק (סריקה), נפעיל OCR
+            if len(page_text.strip()) < 10:
+                pix = page.get_pixmap()
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                results = reader.readtext(np.array(img), paragraph=True)
+                # מיון תוצאות ה-OCR לפי עמודות
+                results.sort(key=lambda r: (r[0][0][0] < (pix.width / 2), r[0][0][1]))
+                page_text = " ".join([r[1] for r in results])
+            
+            full_text += page_text + " "
+
+        if full_text.strip():
             try:
-                lang = detect(text[:1000])
-                # Default to English if detection is unsure
-                supported_lang = lang if lang in VOICE_MAP else "en"
+                lang = detect(full_text[:500])
+                st.write(f"**שפה שזוהתה:** {lang.upper()}")
                 
-                st.write(f"**Detected Language:** {lang.upper()}")
+                speed_pct = st.sidebar.slider("מהירות דיבור (%)", -50, 50, 0, 5)
+                gender = st.radio("בחר קול:", ["Female", "Male"])
                 
-                # 2. Voice Selection UI
-                gender = st.radio("Select Voice Gender:", ["Female", "Male"])
+                supported_lang = "he" if lang == "he" else "en"
                 selected_voice = VOICE_MAP[supported_lang][gender]
 
-                if st.button("Generate MP3"):
-                    with st.spinner("Creating audio..."):
-                        audio_bytes = asyncio.run(generate_audio(text, selected_voice, speed_str))
-                        st.audio(audio_bytes, format="audio/mp3")
-                        st.download_button("Download MP3", audio_bytes, file_name="audiobook.mp3")
+                if st.button("צור קובץ שמע"):
+                    with st.spinner("מייצר אודיו..."):
+                        audio_bytes = asyncio.run(generate_audio(full_text, selected_voice, f"{speed_pct:+d}%"))
+                        st.audio(audio_bytes)
+                        st.download_button("הורד MP3", audio_bytes, "audiobook.mp3")
             except Exception as e:
-
-                st.error(f"Something went wrong: {e}")
+                st.error(f"שגיאה: {e}")
