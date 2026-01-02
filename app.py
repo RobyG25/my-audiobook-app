@@ -8,7 +8,7 @@ from langdetect import detect
 st.set_page_config(page_title="Audiobook Maker", page_icon="📖")
 
 st.title("📖 הפיכת PDF ל-MP3")
-st.markdown("גרסה דיגיטלית מהירה - תומכת בעברית ואנגלית")
+st.markdown("גרסה דיגיטלית מהירה - תומכת בעברית ואנגלית עבור נורצ'י")
 
 # הגדרות קול ומהירות בתפריט הצד
 st.sidebar.header("הגדרות שמע")
@@ -67,3 +67,4 @@ if uploaded_file:
 
 st.divider()
 st.caption("טיפ: האפליקציה עובדת הכי טוב עם קבצי PDF שיוצרו ב-Word או נשמרו מאתרי אינטרנט.")
+
